@@ -1,4 +1,4 @@
-package main
+package stress
 
 import (
 	"bytes"
@@ -34,19 +34,19 @@ func TestStress_HTTPLoad(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	// Test parameters - EXTREME LOAD! 🔥
 	const (
-		numWorkers   = 200
+		numWorkers        = 200
 		requestsPerWorker = 100
-		totalRequests = numWorkers * requestsPerWorker
+		totalRequests     = numWorkers * requestsPerWorker
 	)
 
 	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
-	t.Logf("Starting load test: %d workers × %d requests = %d total requests", 
+	t.Logf("Starting load test: %d workers × %d requests = %d total requests",
 		numWorkers, requestsPerWorker, totalRequests)
 
 	var wg sync.WaitGroup
@@ -59,9 +59,9 @@ func TestStress_HTTPLoad(t *testing.T) {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			
+
 			client := &http.Client{Timeout: 10 * time.Second}
-			
+
 			for j := 0; j < requestsPerWorker; j++ {
 				// Customize payload with worker ID
 				customPayload := fmt.Sprintf(`{
@@ -82,7 +82,7 @@ func TestStress_HTTPLoad(t *testing.T) {
 					t.Logf("Worker %d request %d failed: %v", workerID, j, err)
 					continue
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 
 				if resp.StatusCode == http.StatusNoContent {
 					atomic.AddInt64(&successCount, 1)
@@ -99,7 +99,7 @@ func TestStress_HTTPLoad(t *testing.T) {
 
 	// Results
 	t.Logf("Load test completed in %v", duration)
-	t.Logf("Successful requests: %d/%d (%.1f%%)", 
+	t.Logf("Successful requests: %d/%d (%.1f%%)",
 		successCount, totalRequests, float64(successCount)/float64(totalRequests)*100)
 	t.Logf("Failed requests: %d", errorCount)
 	t.Logf("Requests per second: %.1f", float64(totalRequests)/duration.Seconds())
@@ -127,7 +127,7 @@ func TestStress_ConcurrentConnections(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	// Test INSANE simultaneous connections 🚀
@@ -147,10 +147,10 @@ func TestStress_ConcurrentConnections(t *testing.T) {
 		wg.Add(1)
 		go func(connID int) {
 			defer wg.Done()
-			
+
 			// Wait for start signal
 			<-startChan
-			
+
 			client := &http.Client{Timeout: 5 * time.Second}
 			payload := fmt.Sprintf(`{
 				"streams": [
@@ -166,7 +166,7 @@ func TestStress_ConcurrentConnections(t *testing.T) {
 				t.Logf("Connection %d failed: %v", connID, err)
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode == http.StatusNoContent {
 				atomic.AddInt64(&successCount, 1)
@@ -177,7 +177,7 @@ func TestStress_ConcurrentConnections(t *testing.T) {
 	// Start all connections simultaneously
 	close(startChan)
 	wg.Wait()
-	
+
 	duration := time.Since(startTime)
 
 	t.Logf("Concurrent connection test completed in %v", duration)
@@ -203,17 +203,17 @@ func TestStress_LargePayloads(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// Test MASSIVE payload sizes 💥
 	testCases := []struct {
-		name           string
-		numStreams     int
+		name             string
+		numStreams       int
 		entriesPerStream int
-		logLineSize    int
+		logLineSize      int
 	}{
 		{"Small batch", 10, 50, 200},
 		{"Medium batch", 25, 100, 1000},
@@ -232,31 +232,31 @@ func TestStress_LargePayloads(t *testing.T) {
 			payload := createLargeJSONPayload(tc.numStreams, tc.entriesPerStream, tc.logLineSize)
 			payloadSize := len(payload)
 
-			t.Logf("Testing payload: %d streams × %d entries × %d chars = %d bytes", 
+			t.Logf("Testing payload: %d streams × %d entries × %d chars = %d bytes",
 				tc.numStreams, tc.entriesPerStream, tc.logLineSize, payloadSize)
 
 			startTime := time.Now()
-			
+
 			client := &http.Client{Timeout: 30 * time.Second}
 			resp, err := client.Post(targetURL, "application/json", bytes.NewReader(payload))
-			
+
 			duration := time.Since(startTime)
-			
+
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, http.StatusNoContent, resp.StatusCode)
-			
+
 			// Give a moment for the handler to process
 			time.Sleep(10 * time.Millisecond)
-			
+
 			expectedEntries := int64(tc.numStreams * tc.entriesPerStream)
 			actualEntries := atomic.LoadInt64(&totalEntries)
-			
-			t.Logf("Processed %d KB in %v (%.1f KB/s)", 
+
+			t.Logf("Processed %d KB in %v (%.1f KB/s)",
 				payloadSize/1024, duration, float64(payloadSize/1024)/duration.Seconds())
 			t.Logf("Expected %d entries, got %d", expectedEntries, actualEntries)
-			
+
 			assert.Equal(t, expectedEntries, actualEntries)
 		})
 	}
@@ -278,7 +278,7 @@ func TestStress_ProtobufLoad(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	const numRequests = 1000 // PROTOBUF MAYHEM! 🔥
@@ -326,7 +326,7 @@ func TestStress_ProtobufLoad(t *testing.T) {
 				t.Logf("Request %d failed: %v", reqID, err)
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode == http.StatusNoContent {
 				atomic.AddInt64(&successCount, 1)
@@ -366,20 +366,20 @@ func TestStress_MemoryPressure(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// INSANE memory pressure test - multiple huge payloads simultaneously!
 	const (
-		numGoroutines = 50
+		numGoroutines     = 50
 		streamsPerRequest = 100
-		entriesPerStream = 500
-		logLineSize = 10000 // 10KB per log line!
+		entriesPerStream  = 500
+		logLineSize       = 10000 // 10KB per log line!
 	)
 
-	t.Logf("🔥 MEMORY PRESSURE TEST: %d goroutines × %d streams × %d entries × %dKB = ~%dGB total", 
+	t.Logf("🔥 MEMORY PRESSURE TEST: %d goroutines × %d streams × %d entries × %dKB = ~%dGB total",
 		numGoroutines, streamsPerRequest, entriesPerStream, logLineSize/1024,
 		(numGoroutines*streamsPerRequest*entriesPerStream*logLineSize)/(1024*1024*1024))
 
@@ -393,14 +393,14 @@ func TestStress_MemoryPressure(t *testing.T) {
 			defer wg.Done()
 
 			payload := createLargeJSONPayload(streamsPerRequest, entriesPerStream, logLineSize)
-			
+
 			client := &http.Client{Timeout: 60 * time.Second}
 			resp, err := client.Post(targetURL, "application/json", bytes.NewReader(payload))
 			if err != nil {
 				t.Logf("Goroutine %d failed: %v", goroutineID, err)
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode == http.StatusNoContent {
 				atomic.AddInt64(&successCount, 1)
@@ -446,19 +446,19 @@ func TestStress_SustainedLoad(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// SUSTAINED HIGH LOAD for 30 seconds! 💪
 	const (
-		testDuration = 30 * time.Second
-		numWorkers = 100
+		testDuration    = 30 * time.Second
+		numWorkers      = 100
 		requestInterval = 10 * time.Millisecond // One request every 10ms per worker
 	)
 
-	t.Logf("🔥 SUSTAINED LOAD TEST: %d workers for %v (one request every %v per worker)", 
+	t.Logf("🔥 SUSTAINED LOAD TEST: %d workers for %v (one request every %v per worker)",
 		numWorkers, testDuration, requestInterval)
 
 	ctx, cancel := context.WithTimeout(context.Background(), testDuration)
@@ -473,7 +473,7 @@ func TestStress_SustainedLoad(t *testing.T) {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			
+
 			client := &http.Client{Timeout: 5 * time.Second}
 			ticker := time.NewTicker(requestInterval)
 			defer ticker.Stop()
@@ -502,7 +502,7 @@ func TestStress_SustainedLoad(t *testing.T) {
 						atomic.AddInt64(&errorCount, 1)
 						continue
 					}
-					resp.Body.Close()
+					_ = resp.Body.Close()
 
 					if resp.StatusCode == http.StatusNoContent {
 						atomic.AddInt64(&successCount, 1)
@@ -526,7 +526,7 @@ func TestStress_SustainedLoad(t *testing.T) {
 	t.Logf("📊 Total requests processed by server: %d", atomic.LoadInt64(&totalRequests))
 	t.Logf("📈 Average requests per second: %.1f", float64(successCount)/duration.Seconds())
 	t.Logf("🔢 Total log entries processed: %d", atomic.LoadInt64(&totalEntries))
-	
+
 	totalRequestsMade := successCount + errorCount
 	successRate := float64(successCount) / float64(totalRequestsMade) * 100
 	t.Logf("🎯 Success rate: %.1f%%", successRate)
@@ -559,19 +559,19 @@ func TestStress_MixedWorkload(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// MIXED WORKLOAD CHAOS! 🌪️
 	const (
-		numJSONWorkers = 75
+		numJSONWorkers     = 75
 		numProtobufWorkers = 25
-		requestsPerWorker = 50
+		requestsPerWorker  = 50
 	)
 
-	t.Logf("🌪️  MIXED WORKLOAD TEST: %d JSON workers + %d protobuf workers × %d requests each", 
+	t.Logf("🌪️  MIXED WORKLOAD TEST: %d JSON workers + %d protobuf workers × %d requests each",
 		numJSONWorkers, numProtobufWorkers, requestsPerWorker)
 
 	var wg sync.WaitGroup
@@ -583,9 +583,9 @@ func TestStress_MixedWorkload(t *testing.T) {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			
+
 			client := &http.Client{Timeout: 10 * time.Second}
-			
+
 			for j := 0; j < requestsPerWorker; j++ {
 				payload := fmt.Sprintf(`{
 					"streams": [
@@ -603,7 +603,7 @@ func TestStress_MixedWorkload(t *testing.T) {
 				if err != nil {
 					continue
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 
 				if resp.StatusCode == http.StatusNoContent {
 					atomic.AddInt64(&successCount, 1)
@@ -617,9 +617,9 @@ func TestStress_MixedWorkload(t *testing.T) {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			
+
 			client := &http.Client{Timeout: 10 * time.Second}
-			
+
 			for j := 0; j < requestsPerWorker; j++ {
 				pushReq := push.PushRequest{
 					Streams: []push.Stream{
@@ -648,7 +648,7 @@ func TestStress_MixedWorkload(t *testing.T) {
 				if err != nil {
 					continue
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 
 				if resp.StatusCode == http.StatusNoContent {
 					atomic.AddInt64(&successCount, 1)
@@ -689,7 +689,7 @@ func createLargeJSONPayload(numStreams, entriesPerStream, logLineSize int) []byt
 	}
 
 	// Create a large log line
-	logLine := fmt.Sprintf("Large log entry with %d characters: %s", 
+	logLine := fmt.Sprintf("Large log entry with %d characters: %s",
 		logLineSize, randomString(logLineSize-50))
 
 	payload := jsonPayload{
@@ -724,7 +724,7 @@ func randomString(length int) string {
 	if length <= 0 {
 		return ""
 	}
-	
+
 	result := make([]byte, length)
 	for i := range result {
 		result[i] = charset[i%len(charset)]

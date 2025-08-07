@@ -43,7 +43,7 @@ func TestBasicE2E(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		_ = server.Stop(shutdownCtx)
 	})
 
 	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
@@ -84,7 +84,7 @@ scrape_configs:
 	inputLogs, err := os.Open("../apache_logs.txt")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		inputLogs.Close()
+		_ = inputLogs.Close()
 	})
 
 	req := testcontainers.ContainerRequest{
@@ -112,7 +112,7 @@ scrape_configs:
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		ctr.Terminate(ctx)
+		_ = ctr.Terminate(ctx)
 	})
 
 	// Wait for promtail to send data

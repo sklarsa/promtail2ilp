@@ -16,59 +16,30 @@ build:
 	@echo "Building $(BINARY_NAME)..."
 	go build $(LDFLAGS) -o $(BINARY_NAME) .
 
-# Run tests with coverage
+# Run unit and server tests with coverage (excludes integration and stress)
 .PHONY: test
 test:
-	@echo "Running tests with coverage..."
-	go test -v -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report generated: coverage.html"
+	@echo "Running unit and server tests with coverage..."
+	go test -v -coverprofile=coverage.out ./server
+	@echo "Coverage report:"
+	@go tool cover -func=coverage.out
+
+# Run integration tests
+.PHONY: integration
+integration:
+	@echo "Running integration tests..."
+	go test -v -timeout=30m ./integration
 
 # Run stress tests
 .PHONY: stress
 stress:
-	@echo "Running stress tests..."
-	go test -v -run="TestStress" -timeout=5m ./...
+	@echo "Running all stress tests..."
+	go test -v -timeout=30m ./stress
 
-# Run stress tests with race detection
-.PHONY: stress-race
-stress-race:
-	@echo "Running stress tests with race detection..."
-	go test -v -race -run="TestStress" -timeout=10m ./...
-
-# Run individual stress test types
-.PHONY: stress-load stress-concurrent stress-payloads stress-protobuf stress-memory stress-sustained stress-mixed stress-extreme
-stress-load:
-	@echo "Running HTTP load stress test..."
-	./stress.sh load
-
-stress-concurrent:
-	@echo "Running concurrent connections stress test..."
-	./stress.sh concurrent
-
-stress-payloads:
-	@echo "Running large payloads stress test..."
-	./stress.sh payloads
-
-stress-protobuf:
-	@echo "Running protobuf load stress test..."
-	./stress.sh protobuf
-
-stress-memory:
-	@echo "Running INSANE memory pressure test..."
-	./stress.sh memory
-
-stress-sustained:
-	@echo "Running sustained load test..."
-	./stress.sh sustained
-
-stress-mixed:
-	@echo "Running mixed workload chaos test..."
-	./stress.sh mixed
-
-stress-extreme:
-	@echo "🔥🔥🔥 RUNNING ALL EXTREME STRESS TESTS! 🔥🔥🔥"
-	./stress.sh extreme
+# Run all tests (unit, integration, stress)
+.PHONY: test-all
+test-all: test integration stress
+	@echo "All tests completed!"
 
 
 # Run the application
@@ -94,7 +65,7 @@ run-trace: build
 clean:
 	@echo "Cleaning..."
 	rm -f $(BINARY_NAME)
-	rm -f coverage.out coverage.html
+	rm -f coverage.out
 
 # Format code
 .PHONY: fmt
@@ -105,6 +76,8 @@ fmt:
 # Lint code with golangci-lint
 .PHONY: lint
 lint: install-golangci-lint
+	@echo "Running go vet..."
+	go vet ./...
 	@echo "Running golangci-lint..."
 	golangci-lint run
 
@@ -134,17 +107,10 @@ check: fmt lint test
 help:
 	@echo "Available targets:"
 	@echo "  build                Build the binary"
-	@echo "  test                 Run tests with coverage report"
-	@echo "  stress               Run stress tests"
-	@echo "  stress-race          Run stress tests with race detection"
-	@echo "  stress-load          Run HTTP load stress test (20K requests!)"
-	@echo "  stress-concurrent    Run concurrent connections stress test (500 connections!)"
-	@echo "  stress-payloads      Run large payloads stress test (MEGA sizes!)"
-	@echo "  stress-protobuf      Run protobuf load stress test (1000 requests!)"
-	@echo "  stress-memory        Run INSANE memory pressure test"
-	@echo "  stress-sustained     Run sustained load test (30 seconds!)"
-	@echo "  stress-mixed         Run mixed workload chaos test"
-	@echo "  stress-extreme       Run ALL EXTREME stress tests 🔥"
+	@echo "  test                 Run unit and server tests with coverage"
+	@echo "  integration          Run integration tests (QuestDB, containers)"
+	@echo "  stress               Run all stress tests (extreme load testing)"
+	@echo "  test-all             Run all tests (unit + integration + stress)"
 	@echo "  check                Run all checks (fmt, lint, test)"
 	@echo "  run                  Build and run the application"
 	@echo "  run-debug            Build and run with debug logging"

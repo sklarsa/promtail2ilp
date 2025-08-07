@@ -1,4 +1,4 @@
-package main
+package integration
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func TestQuestDBIntegration(t *testing.T) {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		questdbContainer.Terminate(ctx)
+		_ = questdbContainer.Terminate(ctx)
 	})
 
 	// Get ports
@@ -55,7 +55,7 @@ func TestQuestDBIntegration(t *testing.T) {
 	db, err := sql.Open("postgres", connStr)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		db.Close()
+		_ = db.Close()
 	})
 
 	// Wait for connection to be ready
@@ -82,7 +82,7 @@ func TestQuestDBIntegration(t *testing.T) {
 	writer, err := server.NewILPWriterWithConfig(ilpAddr, writerConfig)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		writer.Close()
+		_ = writer.Close()
 	})
 
 	// Add logging to debug
@@ -97,7 +97,7 @@ func TestQuestDBIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		promtailServer.Stop(shutdownCtx)
+		_ = promtailServer.Stop(shutdownCtx)
 	})
 
 	// Start promtail container pointing to our server
@@ -144,7 +144,7 @@ scrape_configs:
 			Cmd:          []string{"-config.file=/etc/promtail/config.yml"},
 			Files: []testcontainers.ContainerFile{
 				{
-					HostFilePath:      "./apache_logs.txt",
+					HostFilePath:      "../apache_logs.txt",
 					ContainerFilePath: "/logs/apache.log",
 				},
 				{
@@ -160,7 +160,7 @@ scrape_configs:
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		promtailContainer.Terminate(ctx)
+		_ = promtailContainer.Terminate(ctx)
 	})
 
 	// Query QuestDB to verify data
@@ -184,7 +184,7 @@ scrape_configs:
 			LIMIT 10
 		`)
 		require.NoError(t, err)
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		logCount := 0
 		for rows.Next() {
@@ -225,7 +225,7 @@ scrape_configs:
 			LIMIT 5
 		`)
 		require.NoError(t, err)
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		t.Logf("\nTop method/status combinations:")
 		for rows.Next() {

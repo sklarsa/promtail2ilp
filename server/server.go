@@ -243,7 +243,7 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 // Returns the decompressed body bytes or an error if reading/decompression fails.
 func (s *PromtailServer) readRequestBody(r *http.Request) ([]byte, error) {
 	var reader io.Reader = r.Body
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	contentEncoding := r.Header.Get("Content-Encoding")
 	switch contentEncoding {
@@ -253,7 +253,7 @@ func (s *PromtailServer) readRequestBody(r *http.Request) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error creating gzip reader: %w", err)
 		}
-		defer gzReader.Close()
+		defer func() { _ = gzReader.Close() }()
 		reader = gzReader
 	case "snappy":
 		s.logDebug("Decompressing snappy content")

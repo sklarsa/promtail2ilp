@@ -43,17 +43,22 @@ func (w *ILPWriter) WriteStream(stream push.Stream) error {
 		// Start building the ILP line
 		w.sender.Table("logs")
 
-		// Add log line as a field
-		w.sender.StringColumn("log", entry.Line)
-
-		// Add labels as tags
+		// Add labels as symbols first (QuestDB requires symbols before other columns)
 		for k, v := range labels {
-			// QuestDB requires tag values to be symbols (not strings)
 			w.sender.Symbol(k, v)
 		}
 
-		// Set timestamp
-		w.sender.At(context.Background(), entry.Timestamp)
+		// Add log line as a field
+		w.sender.StringColumn("log", entry.Line)
+
+		// Set timestamp and send the row
+		err := w.sender.At(context.Background(), entry.Timestamp)
+		if err != nil {
+			if w.config != nil && w.config.OnError != nil {
+				w.config.OnError(stream, err)
+			}
+			return fmt.Errorf("failed to send ILP row: %w", err)
+		}
 	}
 
 	// Flush the data
@@ -105,6 +110,6 @@ func parseLabels(labelStr string) map[string]string {
 // StreamHandler returns a handler function that writes streams to QuestDB
 func (w *ILPWriter) StreamHandler() func(stream push.Stream) {
 	return func(stream push.Stream) {
-		w.WriteStream(stream)
+		_ = w.WriteStream(stream)
 	}
 }
