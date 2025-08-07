@@ -58,13 +58,9 @@ func TestQuestDBIntegration(t *testing.T) {
 	})
 	
 	// Wait for connection to be ready
-	for i := 0; i < 30; i++ {
-		if err := db.Ping(); err == nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	require.NoError(t, db.Ping())
+	require.Eventually(t, func() bool {
+		return db.Ping() == nil
+	}, 30*time.Second, time.Second, "Database should be ready for connections")
 	
 	// Create the logs table
 	_, err = db.Exec(CreateLogsTableSQL())
@@ -170,15 +166,16 @@ scrape_configs:
 		promtailContainer.Terminate(ctx)
 	})
 	
-	// Wait for data to be ingested
-	time.Sleep(10 * time.Second)
-	
 	// Query QuestDB to verify data
 	t.Run("verify_log_count", func(t *testing.T) {
 		var count int
-		err := db.QueryRow("SELECT count(*) FROM logs").Scan(&count)
-		require.NoError(t, err)
-		require.Greater(t, count, 0, "Should have received some logs")
+		
+		// Wait for data to be ingested
+		require.Eventually(t, func() bool {
+			err := db.QueryRow("SELECT count(*) FROM logs").Scan(&count)
+			return err == nil && count > 0
+		}, 15*time.Second, 500*time.Millisecond, "Should have received some logs in QuestDB")
+		
 		t.Logf("Total logs in QuestDB: %d", count)
 	})
 	

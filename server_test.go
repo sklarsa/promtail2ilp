@@ -108,10 +108,10 @@ scrape_configs:
 	})
 	
 	// Wait for promtail to send data
-	time.Sleep(time.Second * 10)
+	require.Eventually(t, func() bool {
+		return len(receivedStreams) > 0
+	}, 15*time.Second, 100*time.Millisecond, "Should have received at least one stream")
 	
-	// Verify we received streams
-	require.NotEmpty(t, receivedStreams, "Should have received at least one stream")
 	t.Logf("Received %d total streams", len(receivedStreams))
 	
 	// Log some sample data
