@@ -71,10 +71,8 @@ func TestQuestDBIntegration(t *testing.T) {
 	require.NoError(t, err)
 	
 	// Start promtail server with minimal logging for tests
-	serverConfig := DefaultServerConfig()
+	serverConfig := QuietServerConfig()
 	serverConfig.Port = 0
-	serverConfig.Debug = false
-	serverConfig.Verbose = false
 	
 	promtailServer := NewPromtailServerWithConfig(serverConfig)
 	

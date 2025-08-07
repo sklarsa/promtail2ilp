@@ -19,10 +19,8 @@ func TestBasicE2E(t *testing.T) {
 	ctx := context.Background()
 	
 	// Start our server with minimal logging for tests
-	config := DefaultServerConfig()
+	config := QuietServerConfig()
 	config.Port = 0 // Use port 0 to get a random available port
-	config.Debug = false
-	config.Verbose = false
 	
 	server := NewPromtailServerWithConfig(config)
 	

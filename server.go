@@ -16,22 +16,62 @@ import (
 	"github.com/grafana/loki/pkg/push"
 )
 
+// LogLevel represents the logging verbosity level for the server.
+// Higher values include all messages from lower levels.
+type LogLevel int
+
+const (
+	// LogLevelError logs only error messages
+	LogLevelError LogLevel = iota
+	// LogLevelInfo logs errors and basic informational messages
+	LogLevelInfo
+	// LogLevelDebug logs errors, info, and debug details about request processing
+	LogLevelDebug
+	// LogLevelTrace logs all messages including detailed stream content
+	LogLevelTrace
+)
+
+// ServerConfig contains configuration options for the Promtail server.
 type ServerConfig struct {
-	Port    int
-	Debug   bool
-	Verbose bool
-	Logger  *log.Logger
+	// Port specifies the HTTP port to listen on. Use 0 for a random available port.
+	Port int
+	// LogLevel controls the verbosity of logging output
+	LogLevel LogLevel
+	// Logger is the logger instance to use. If nil, no logging will occur.
+	Logger *log.Logger
 }
 
+// DefaultServerConfig returns a ServerConfig with sensible defaults:
+// - Port 9999
+// - LogLevelInfo logging
+// - Default logger
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
-		Port:    9999,
-		Debug:   false,
-		Verbose: false,
-		Logger:  log.Default(),
+		Port:     9999,
+		LogLevel: LogLevelInfo,
+		Logger:   log.Default(),
 	}
 }
 
+// QuietServerConfig returns a ServerConfig with minimal logging (errors only).
+// Useful for tests or production environments where log volume should be minimal.
+func QuietServerConfig() *ServerConfig {
+	config := DefaultServerConfig()
+	config.LogLevel = LogLevelError
+	return config
+}
+
+// VerboseServerConfig returns a ServerConfig with maximum logging enabled.
+// Useful for debugging and development. Logs detailed stream content.
+func VerboseServerConfig() *ServerConfig {
+	config := DefaultServerConfig()
+	config.LogLevel = LogLevelTrace
+	return config
+}
+
+// PromtailServer is an HTTP server that receives log streams from Promtail
+// and processes them. It supports both JSON and protobuf formats with
+// optional gzip and snappy compression.
 type PromtailServer struct {
 	config   *ServerConfig
 	server   *http.Server
@@ -39,46 +79,67 @@ type PromtailServer struct {
 	handler  func(stream push.Stream)
 }
 
+// NewPromtailServer creates a new PromtailServer with default configuration
+// listening on the specified port.
 func NewPromtailServer(port int) *PromtailServer {
 	config := DefaultServerConfig()
 	config.Port = port
 	return NewPromtailServerWithConfig(config)
 }
 
+// NewPromtailServerWithConfig creates a new PromtailServer with the provided configuration.
 func NewPromtailServerWithConfig(config *ServerConfig) *PromtailServer {
 	return &PromtailServer{
 		config: config,
 	}
 }
 
+// SetHandler sets a custom handler function to process received log streams.
+// The handler will be called for each stream after built-in logging is performed.
+// If no handler is set, streams will only be logged according to the configured log level.
 func (s *PromtailServer) SetHandler(handler func(stream push.Stream)) {
 	s.handler = handler
 }
 
+func (s *PromtailServer) logStream(stream push.Stream) {
+	if s.config.LogLevel >= LogLevelTrace {
+		s.config.Logger.Printf("\n=== Stream ===")
+		s.config.Logger.Printf("Labels: %s", stream.Labels)
+		s.config.Logger.Printf("Number of entries: %d", len(stream.Entries))
+		
+		for i, entry := range stream.Entries {
+			s.config.Logger.Printf("  Entry %d: [%s] %s", i+1, entry.Timestamp.Format(time.RFC3339), entry.Line)
+		}
+	}
+}
+
 func (s *PromtailServer) logError(format string, v ...interface{}) {
-	if s.config.Logger != nil {
+	if s.config.LogLevel >= LogLevelError && s.config.Logger != nil {
 		s.config.Logger.Printf("ERROR: "+format, v...)
 	}
 }
 
-func (s *PromtailServer) logDebug(format string, v ...interface{}) {
-	if s.config.Debug && s.config.Logger != nil {
-		s.config.Logger.Printf("DEBUG: "+format, v...)
-	}
-}
-
-func (s *PromtailServer) logVerbose(format string, v ...interface{}) {
-	if s.config.Verbose && s.config.Logger != nil {
-		s.config.Logger.Printf("VERBOSE: "+format, v...)
-	}
-}
-
 func (s *PromtailServer) logInfo(format string, v ...interface{}) {
-	if s.config.Logger != nil {
+	if s.config.LogLevel >= LogLevelInfo && s.config.Logger != nil {
 		s.config.Logger.Printf("INFO: "+format, v...)
 	}
 }
 
+func (s *PromtailServer) logDebug(format string, v ...interface{}) {
+	if s.config.LogLevel >= LogLevelDebug && s.config.Logger != nil {
+		s.config.Logger.Printf("DEBUG: "+format, v...)
+	}
+}
+
+func (s *PromtailServer) logTrace(format string, v ...interface{}) {
+	if s.config.LogLevel >= LogLevelTrace && s.config.Logger != nil {
+		s.config.Logger.Printf("TRACE: "+format, v...)
+	}
+}
+
+// Start starts the HTTP server and begins listening for Promtail requests.
+// The server runs in a separate goroutine and this method returns immediately.
+// Returns an error if the server fails to start.
 func (s *PromtailServer) Start() error {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.Port))
 	if err != nil {
@@ -103,6 +164,9 @@ func (s *PromtailServer) Start() error {
 	return nil
 }
 
+// Stop gracefully shuts down the server using the provided context for timeout.
+// It will stop accepting new connections and wait for existing requests to complete.
+// Returns an error if the shutdown process fails or times out.
 func (s *PromtailServer) Stop(ctx context.Context) error {
 	if s.server != nil {
 		return s.server.Shutdown(ctx)
@@ -110,6 +174,9 @@ func (s *PromtailServer) Stop(ctx context.Context) error {
 	return nil
 }
 
+// Port returns the actual port the server is listening on.
+// This is useful when the server was configured with port 0 (random available port).
+// Returns the configured port if the server hasn't started yet.
 func (s *PromtailServer) Port() int {
 	if s.listener != nil {
 		if addr, ok := s.listener.Addr().(*net.TCPAddr); ok {
@@ -121,7 +188,7 @@ func (s *PromtailServer) Port() int {
 
 func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Request) {
 	s.logDebug("Received %s request from %s", r.Method, r.RemoteAddr)
-	s.logVerbose("Request headers: %v", r.Header)
+	s.logTrace("Request headers: %v", r.Header)
 
 	var reader io.Reader = r.Body
 	defer r.Body.Close()
@@ -172,7 +239,8 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 
 		// Process streams
 		for i, stream := range pushReq.Streams {
-			s.logVerbose("Processing stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
+			s.logDebug("Processing stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
+			s.logStream(stream)
 			if s.handler != nil {
 				s.handler(stream)
 			}
@@ -216,7 +284,8 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 				}
 			}
 			
-			s.logVerbose("Processing JSON stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
+			s.logDebug("Processing JSON stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
+			s.logStream(stream)
 			if s.handler != nil {
 				s.handler(stream)
 			}
