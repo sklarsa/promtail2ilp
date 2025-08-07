@@ -101,6 +101,9 @@ func (s *PromtailServer) SetHandler(handler func(stream push.Stream)) {
 	s.handler = handler
 }
 
+// logStream logs detailed information about a log stream at trace level.
+// This includes the stream labels, entry count, and each individual log entry
+// with timestamp and content. Only outputs when LogLevelTrace is enabled.
 func (s *PromtailServer) logStream(stream push.Stream) {
 	if s.config.LogLevel >= LogLevelTrace {
 		s.config.Logger.Printf("\n=== Stream ===")
@@ -186,6 +189,23 @@ func (s *PromtailServer) Port() int {
 	return s.config.Port
 }
 
+// handlePromtailPush is the main HTTP handler for processing Promtail log push requests.
+// It supports both JSON and protobuf content types with optional gzip/snappy compression.
+// The handler performs the following steps:
+//  1. Read and decompress the request body
+//  2. Parse the content based on Content-Type header
+//  3. Process each log stream through registered handlers
+//  4. Return HTTP 204 No Content on success or 400 Bad Request on errors
+//
+// Supported Content-Type headers:
+//   - application/x-protobuf: Protocol Buffer format (Loki's native format)
+//   - application/json: JSON format
+//   - Any other value defaults to JSON parsing
+//
+// Supported Content-Encoding headers:
+//   - gzip: GNU zip compression
+//   - snappy: Snappy compression
+//   - No header: uncompressed content
 func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Request) {
 	s.logDebug("Received %s request from %s", r.Method, r.RemoteAddr)
 	s.logTrace("Request headers: %v", r.Header)
@@ -211,6 +231,16 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// readRequestBody reads and decompresses the HTTP request body.
+// It supports gzip and snappy compression based on the Content-Encoding header.
+// The request body is automatically closed after reading.
+//
+// Supported compression formats:
+//   - "gzip": Decompresses using gzip.NewReader
+//   - "snappy": Decompresses using snappy.NewReader
+//   - Other/none: Reads body without decompression
+//
+// Returns the decompressed body bytes or an error if reading/decompression fails.
 func (s *PromtailServer) readRequestBody(r *http.Request) ([]byte, error) {
 	var reader io.Reader = r.Body
 	defer r.Body.Close()
@@ -238,6 +268,14 @@ func (s *PromtailServer) readRequestBody(r *http.Request) ([]byte, error) {
 	return body, nil
 }
 
+// parseRequestBody determines the content format and delegates to the appropriate parser.
+// Routes requests to either protobuf or JSON parsing based on the Content-Type header.
+//
+// Content-Type routing:
+//   - "application/x-protobuf": Uses parseProtobuf
+//   - All others: Uses parseJSON (default)
+//
+// Returns a slice of parsed log streams or an error if parsing fails.
 func (s *PromtailServer) parseRequestBody(body []byte, contentType string) ([]push.Stream, error) {
 	if contentType == "application/x-protobuf" {
 		return s.parseProtobuf(body)
@@ -245,6 +283,17 @@ func (s *PromtailServer) parseRequestBody(body []byte, contentType string) ([]pu
 	return s.parseJSON(body)
 }
 
+// parseProtobuf parses Protocol Buffer formatted log data.
+// Attempts to decompress the data with snappy if it appears to be compressed.
+// This handles Loki's native protobuf format which may have additional snappy
+// compression applied on top of HTTP-level compression.
+//
+// Processing steps:
+//  1. Try snappy decompression (fails silently if not snappy-compressed)
+//  2. Unmarshal as Loki push.PushRequest protobuf message
+//  3. Extract and return the contained log streams
+//
+// Returns the parsed streams or an error if protobuf unmarshaling fails.
 func (s *PromtailServer) parseProtobuf(body []byte) ([]push.Stream, error) {
 	// Try to decompress with snappy first in case it's compressed
 	decompressed, err := snappy.Decode(nil, body)
@@ -262,6 +311,27 @@ func (s *PromtailServer) parseProtobuf(body []byte) ([]push.Stream, error) {
 	return pushReq.Streams, nil
 }
 
+// parseJSON parses JSON formatted log data and converts it to Loki's stream format.
+// Handles the JSON structure used by Promtail for log shipping.
+//
+// Expected JSON format:
+//
+//	{
+//	  "streams": [
+//	    {
+//	      "stream": {"label1": "value1", "label2": "value2"},
+//	      "values": [["timestamp_ns", "log_line"], ...]
+//	    }
+//	  ]
+//	}
+//
+// Processing:
+//   - Converts label maps to Loki's string format: {label1="value1", label2="value2"}
+//   - Parses timestamps from nanosecond strings to time.Time
+//   - Skips entries with invalid timestamps or insufficient data
+//   - Creates push.Stream objects compatible with Loki's format
+//
+// Returns the converted streams or an error if JSON parsing fails.
 func (s *PromtailServer) parseJSON(body []byte) ([]push.Stream, error) {
 	var pushReq struct {
 		Streams []struct {
@@ -304,6 +374,16 @@ func (s *PromtailServer) parseJSON(body []byte) ([]push.Stream, error) {
 	return streams, nil
 }
 
+// processStreams handles a batch of parsed log streams.
+// For each stream, it performs logging (if enabled) and invokes the
+// registered handler function (if set).
+//
+// Processing steps for each stream:
+//  1. Log debug information about the stream
+//  2. Log detailed stream content (if trace level enabled)
+//  3. Call the custom handler function (if registered)
+//
+// This method is safe to call with empty slices and handles nil handlers gracefully.
 func (s *PromtailServer) processStreams(streams []push.Stream) {
 	for i, stream := range streams {
 		s.logDebug("Processing stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
@@ -314,6 +394,18 @@ func (s *PromtailServer) processStreams(streams []push.Stream) {
 	}
 }
 
+// formatLabels converts a map of labels to Loki's string format.
+// Takes a map[string]string and returns a formatted string in the form:
+// {key1="value1", key2="value2", ...}
+//
+// This matches the label format expected by Loki and other Prometheus-ecosystem tools.
+// The iteration order of map keys is not guaranteed, so the output order may vary
+// between calls with the same input.
+//
+// Example:
+//
+//	input: map[string]string{"job": "api", "env": "prod"}
+//	output: "{job="api", env="prod"}" (order may vary)
 func formatLabels(labels map[string]string) string {
 	result := "{"
 	first := true
