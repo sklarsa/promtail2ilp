@@ -62,9 +62,6 @@ func TestQuestDBIntegration(t *testing.T) {
 		return db.Ping() == nil
 	}, 30*time.Second, time.Second, "Database should be ready for connections")
 	
-	// Create the logs table
-	_, err = db.Exec(CreateLogsTableSQL())
-	require.NoError(t, err)
 	
 	// Start promtail server with minimal logging for tests
 	serverConfig := QuietServerConfig()

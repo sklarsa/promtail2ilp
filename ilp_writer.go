@@ -102,21 +102,6 @@ func parseLabels(labelStr string) map[string]string {
 	return labels
 }
 
-// CreateLogsTableSQL returns the SQL to create the logs table in QuestDB
-func CreateLogsTableSQL() string {
-	return `
-CREATE TABLE IF NOT EXISTS logs (
-	log STRING,
-	filename SYMBOL,
-	ip SYMBOL,
-	job SYMBOL,
-	method SYMBOL,
-	path SYMBOL,
-	status SYMBOL,
-	timestamp TIMESTAMP
-) timestamp(timestamp) PARTITION BY DAY;
-`
-}
 
 // StreamHandler returns a handler function that writes streams to QuestDB
 func (w *ILPWriter) StreamHandler() func(stream push.Stream) {
