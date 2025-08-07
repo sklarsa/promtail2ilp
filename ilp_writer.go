@@ -3,18 +3,27 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/grafana/loki/pkg/push"
 	qdb "github.com/questdb/go-questdb-client/v3"
 )
 
+type ILPWriterConfig struct {
+	OnSuccess func(stream push.Stream)
+	OnError   func(stream push.Stream, err error)
+}
+
 type ILPWriter struct {
 	sender qdb.LineSender
+	config *ILPWriterConfig
 }
 
 func NewILPWriter(addr string) (*ILPWriter, error) {
+	return NewILPWriterWithConfig(addr, nil)
+}
+
+func NewILPWriterWithConfig(addr string, config *ILPWriterConfig) (*ILPWriter, error) {
 	sender, err := qdb.LineSenderFromConf(context.Background(), addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ILP sender: %w", err)
@@ -22,13 +31,13 @@ func NewILPWriter(addr string) (*ILPWriter, error) {
 	
 	return &ILPWriter{
 		sender: sender,
+		config: config,
 	}, nil
 }
 
 func (w *ILPWriter) WriteStream(stream push.Stream) error {
 	// Parse labels from the stream
 	labels := parseLabels(stream.Labels)
-	log.Printf("Parsed labels: %v", labels)
 	
 	for _, entry := range stream.Entries {
 		// Start building the ILP line
@@ -50,7 +59,14 @@ func (w *ILPWriter) WriteStream(stream push.Stream) error {
 	// Flush the data
 	err := w.sender.Flush(context.Background())
 	if err != nil {
+		if w.config != nil && w.config.OnError != nil {
+			w.config.OnError(stream, err)
+		}
 		return fmt.Errorf("failed to flush ILP data: %w", err)
+	}
+	
+	if w.config != nil && w.config.OnSuccess != nil {
+		w.config.OnSuccess(stream)
 	}
 	
 	return nil
@@ -105,10 +121,6 @@ CREATE TABLE IF NOT EXISTS logs (
 // StreamHandler returns a handler function that writes streams to QuestDB
 func (w *ILPWriter) StreamHandler() func(stream push.Stream) {
 	return func(stream push.Stream) {
-		if err := w.WriteStream(stream); err != nil {
-			log.Printf("Error writing stream to QuestDB: %v", err)
-		} else {
-			log.Printf("Successfully wrote stream to QuestDB: %s", stream.Labels)
-		}
+		w.WriteStream(stream)
 	}
 }

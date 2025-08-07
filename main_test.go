@@ -18,8 +18,13 @@ import (
 func TestBasicE2E(t *testing.T) {
 	ctx := context.Background()
 	
-	// Start our server
-	server := NewPromtailServer(0) // Use port 0 to get a random available port
+	// Start our server with minimal logging for tests
+	config := DefaultServerConfig()
+	config.Port = 0 // Use port 0 to get a random available port
+	config.Debug = false
+	config.Verbose = false
+	
+	server := NewPromtailServerWithConfig(config)
 	
 	// Collect received streams
 	var receivedStreams []push.Stream

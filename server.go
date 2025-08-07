@@ -16,16 +16,38 @@ import (
 	"github.com/grafana/loki/pkg/push"
 )
 
+type ServerConfig struct {
+	Port    int
+	Debug   bool
+	Verbose bool
+	Logger  *log.Logger
+}
+
+func DefaultServerConfig() *ServerConfig {
+	return &ServerConfig{
+		Port:    9999,
+		Debug:   false,
+		Verbose: false,
+		Logger:  log.Default(),
+	}
+}
+
 type PromtailServer struct {
-	port     int
+	config   *ServerConfig
 	server   *http.Server
 	listener net.Listener
 	handler  func(stream push.Stream)
 }
 
 func NewPromtailServer(port int) *PromtailServer {
+	config := DefaultServerConfig()
+	config.Port = port
+	return NewPromtailServerWithConfig(config)
+}
+
+func NewPromtailServerWithConfig(config *ServerConfig) *PromtailServer {
 	return &PromtailServer{
-		port: port,
+		config: config,
 	}
 }
 
@@ -33,10 +55,34 @@ func (s *PromtailServer) SetHandler(handler func(stream push.Stream)) {
 	s.handler = handler
 }
 
+func (s *PromtailServer) logError(format string, v ...interface{}) {
+	if s.config.Logger != nil {
+		s.config.Logger.Printf("ERROR: "+format, v...)
+	}
+}
+
+func (s *PromtailServer) logDebug(format string, v ...interface{}) {
+	if s.config.Debug && s.config.Logger != nil {
+		s.config.Logger.Printf("DEBUG: "+format, v...)
+	}
+}
+
+func (s *PromtailServer) logVerbose(format string, v ...interface{}) {
+	if s.config.Verbose && s.config.Logger != nil {
+		s.config.Logger.Printf("VERBOSE: "+format, v...)
+	}
+}
+
+func (s *PromtailServer) logInfo(format string, v ...interface{}) {
+	if s.config.Logger != nil {
+		s.config.Logger.Printf("INFO: "+format, v...)
+	}
+}
+
 func (s *PromtailServer) Start() error {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.Port))
 	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %w", s.port, err)
+		return fmt.Errorf("failed to listen on port %d: %w", s.config.Port, err)
 	}
 	s.listener = listener
 
@@ -49,10 +95,11 @@ func (s *PromtailServer) Start() error {
 
 	go func() {
 		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			log.Printf("Server error: %v", err)
+			s.logError("Server error: %v", err)
 		}
 	}()
 
+	s.logInfo("Server started on port %d", s.Port())
 	return nil
 }
 
@@ -69,53 +116,63 @@ func (s *PromtailServer) Port() int {
 			return addr.Port
 		}
 	}
-	return s.port
+	return s.config.Port
 }
 
 func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Request) {
+	s.logDebug("Received %s request from %s", r.Method, r.RemoteAddr)
+	s.logVerbose("Request headers: %v", r.Header)
+
 	var reader io.Reader = r.Body
 	defer r.Body.Close()
 
 	contentEncoding := r.Header.Get("Content-Encoding")
 	switch contentEncoding {
 	case "gzip":
+		s.logDebug("Decompressing gzip content")
 		gzReader, err := gzip.NewReader(r.Body)
 		if err != nil {
-			log.Printf("Error creating gzip reader: %v", err)
+			s.logError("Error creating gzip reader: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		defer gzReader.Close()
 		reader = gzReader
 	case "snappy":
+		s.logDebug("Decompressing snappy content")
 		reader = snappy.NewReader(r.Body)
 	}
 
 	body, err := io.ReadAll(reader)
 	if err != nil {
-		log.Printf("Error reading body: %v", err)
+		s.logError("Error reading body: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
+	s.logDebug("Processing %s content, body size: %d bytes", contentType, len(body))
 	
 	if contentType == "application/x-protobuf" {
 		// Try to decompress with snappy first in case it's compressed
 		decompressed, err := snappy.Decode(nil, body)
 		if err == nil && len(decompressed) > 0 {
+			s.logDebug("Applied additional snappy decompression")
 			body = decompressed
 		}
 
 		var pushReq push.PushRequest
 		if err := proto.Unmarshal(body, &pushReq); err != nil {
-			log.Printf("Error parsing protobuf: %v", err)
+			s.logError("Error parsing protobuf: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
+		s.logDebug("Parsed protobuf with %d streams", len(pushReq.Streams))
+
 		// Process streams
-		for _, stream := range pushReq.Streams {
+		for i, stream := range pushReq.Streams {
+			s.logVerbose("Processing stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
 			if s.handler != nil {
 				s.handler(stream)
 			}
@@ -130,13 +187,15 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 		}
 		
 		if err := json.Unmarshal(body, &pushReq); err != nil {
-			log.Printf("Error parsing JSON: %v", err)
+			s.logError("Error parsing JSON: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
+		s.logDebug("Parsed JSON with %d streams", len(pushReq.Streams))
+
 		// Convert JSON to push.Stream format
-		for _, jsonStream := range pushReq.Streams {
+		for i, jsonStream := range pushReq.Streams {
 			stream := push.Stream{
 				Labels: formatLabels(jsonStream.Stream),
 			}
@@ -157,6 +216,7 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 				}
 			}
 			
+			s.logVerbose("Processing JSON stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
 			if s.handler != nil {
 				s.handler(stream)
 			}

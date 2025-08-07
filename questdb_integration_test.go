@@ -45,13 +45,8 @@ func TestQuestDBIntegration(t *testing.T) {
 	pgPort, err := questdbContainer.MappedPort(ctx, "8812")
 	require.NoError(t, err)
 	
-	// Create ILP writer
+	// Create ILP writer address for later use
 	ilpAddr := fmt.Sprintf("tcp::addr=localhost:%s;", ilpPort.Port())
-	writer, err := NewILPWriter(ilpAddr)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		writer.Close()
-	})
 	
 	// Connect to QuestDB via PostgreSQL wire protocol
 	// QuestDB allows passwordless connections by default
@@ -75,8 +70,29 @@ func TestQuestDBIntegration(t *testing.T) {
 	_, err = db.Exec(CreateLogsTableSQL())
 	require.NoError(t, err)
 	
-	// Start promtail server
-	promtailServer := NewPromtailServer(0)
+	// Start promtail server with minimal logging for tests
+	serverConfig := DefaultServerConfig()
+	serverConfig.Port = 0
+	serverConfig.Debug = false
+	serverConfig.Verbose = false
+	
+	promtailServer := NewPromtailServerWithConfig(serverConfig)
+	
+	// Configure ILP writer with logging callbacks
+	writerConfig := &ILPWriterConfig{
+		OnSuccess: func(stream push.Stream) {
+			t.Logf("Successfully wrote stream to QuestDB: %s", stream.Labels)
+		},
+		OnError: func(stream push.Stream, err error) {
+			t.Logf("Error writing stream to QuestDB: %v", err)
+		},
+	}
+	
+	writer, err := NewILPWriterWithConfig(ilpAddr, writerConfig)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		writer.Close()
+	})
 	
 	// Add logging to debug
 	receivedCount := 0
