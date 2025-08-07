@@ -106,7 +106,7 @@ func (s *PromtailServer) logStream(stream push.Stream) {
 		s.config.Logger.Printf("\n=== Stream ===")
 		s.config.Logger.Printf("Labels: %s", stream.Labels)
 		s.config.Logger.Printf("Number of entries: %d", len(stream.Entries))
-		
+
 		for i, entry := range stream.Entries {
 			s.config.Logger.Printf("  Entry %d: [%s] %s", i+1, entry.Timestamp.Format(time.RFC3339), entry.Line)
 		}
@@ -190,6 +190,28 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 	s.logDebug("Received %s request from %s", r.Method, r.RemoteAddr)
 	s.logTrace("Request headers: %v", r.Header)
 
+	body, err := s.readRequestBody(r)
+	if err != nil {
+		s.logError("Error reading request body: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	s.logDebug("Processing %s content, body size: %d bytes", contentType, len(body))
+
+	streams, err := s.parseRequestBody(body, contentType)
+	if err != nil {
+		s.logError("Error parsing request: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.processStreams(streams)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *PromtailServer) readRequestBody(r *http.Request) ([]byte, error) {
 	var reader io.Reader = r.Body
 	defer r.Body.Close()
 
@@ -199,9 +221,7 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 		s.logDebug("Decompressing gzip content")
 		gzReader, err := gzip.NewReader(r.Body)
 		if err != nil {
-			s.logError("Error creating gzip reader: %v", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, fmt.Errorf("error creating gzip reader: %w", err)
 		}
 		defer gzReader.Close()
 		reader = gzReader
@@ -212,87 +232,86 @@ func (s *PromtailServer) handlePromtailPush(w http.ResponseWriter, r *http.Reque
 
 	body, err := io.ReadAll(reader)
 	if err != nil {
-		s.logError("Error reading body: %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("error reading body: %w", err)
 	}
 
-	contentType := r.Header.Get("Content-Type")
-	s.logDebug("Processing %s content, body size: %d bytes", contentType, len(body))
-	
+	return body, nil
+}
+
+func (s *PromtailServer) parseRequestBody(body []byte, contentType string) ([]push.Stream, error) {
 	if contentType == "application/x-protobuf" {
-		// Try to decompress with snappy first in case it's compressed
-		decompressed, err := snappy.Decode(nil, body)
-		if err == nil && len(decompressed) > 0 {
-			s.logDebug("Applied additional snappy decompression")
-			body = decompressed
+		return s.parseProtobuf(body)
+	}
+	return s.parseJSON(body)
+}
+
+func (s *PromtailServer) parseProtobuf(body []byte) ([]push.Stream, error) {
+	// Try to decompress with snappy first in case it's compressed
+	decompressed, err := snappy.Decode(nil, body)
+	if err == nil && len(decompressed) > 0 {
+		s.logDebug("Applied additional snappy decompression")
+		body = decompressed
+	}
+
+	var pushReq push.PushRequest
+	if err := proto.Unmarshal(body, &pushReq); err != nil {
+		return nil, fmt.Errorf("error parsing protobuf: %w", err)
+	}
+
+	s.logDebug("Parsed protobuf with %d streams", len(pushReq.Streams))
+	return pushReq.Streams, nil
+}
+
+func (s *PromtailServer) parseJSON(body []byte) ([]push.Stream, error) {
+	var pushReq struct {
+		Streams []struct {
+			Stream map[string]string `json:"stream"`
+			Values [][]string        `json:"values"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(body, &pushReq); err != nil {
+		return nil, fmt.Errorf("error parsing JSON: %w", err)
+	}
+
+	s.logDebug("Parsed JSON with %d streams", len(pushReq.Streams))
+
+	streams := make([]push.Stream, 0, len(pushReq.Streams))
+	for _, jsonStream := range pushReq.Streams {
+		stream := push.Stream{
+			Labels: formatLabels(jsonStream.Stream),
 		}
 
-		var pushReq push.PushRequest
-		if err := proto.Unmarshal(body, &pushReq); err != nil {
-			s.logError("Error parsing protobuf: %v", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+		for _, entry := range jsonStream.Values {
+			if len(entry) >= 2 {
+				timestamp := entry[0]
+				logLine := entry[1]
 
-		s.logDebug("Parsed protobuf with %d streams", len(pushReq.Streams))
-
-		// Process streams
-		for i, stream := range pushReq.Streams {
-			s.logDebug("Processing stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
-			s.logStream(stream)
-			if s.handler != nil {
-				s.handler(stream)
-			}
-		}
-	} else {
-		// Handle JSON format
-		var pushReq struct {
-			Streams []struct {
-				Stream map[string]string `json:"stream"`
-				Values [][]string        `json:"values"`
-			} `json:"streams"`
-		}
-		
-		if err := json.Unmarshal(body, &pushReq); err != nil {
-			s.logError("Error parsing JSON: %v", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		s.logDebug("Parsed JSON with %d streams", len(pushReq.Streams))
-
-		// Convert JSON to push.Stream format
-		for i, jsonStream := range pushReq.Streams {
-			stream := push.Stream{
-				Labels: formatLabels(jsonStream.Stream),
-			}
-			
-			for _, entry := range jsonStream.Values {
-				if len(entry) >= 2 {
-					timestamp := entry[0]
-					logLine := entry[1]
-					
-					var nanos int64
-					if _, err := fmt.Sscanf(timestamp, "%d", &nanos); err == nil {
-						t := time.Unix(0, nanos)
-						stream.Entries = append(stream.Entries, push.Entry{
-							Timestamp: t,
-							Line:      logLine,
-						})
-					}
+				var nanos int64
+				if _, err := fmt.Sscanf(timestamp, "%d", &nanos); err == nil {
+					t := time.Unix(0, nanos)
+					stream.Entries = append(stream.Entries, push.Entry{
+						Timestamp: t,
+						Line:      logLine,
+					})
 				}
 			}
-			
-			s.logDebug("Processing JSON stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
-			s.logStream(stream)
-			if s.handler != nil {
-				s.handler(stream)
-			}
 		}
+
+		streams = append(streams, stream)
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	return streams, nil
+}
+
+func (s *PromtailServer) processStreams(streams []push.Stream) {
+	for i, stream := range streams {
+		s.logDebug("Processing stream %d: %s with %d entries", i+1, stream.Labels, len(stream.Entries))
+		s.logStream(stream)
+		if s.handler != nil {
+			s.handler(stream)
+		}
+	}
 }
 
 func formatLabels(labels map[string]string) string {
