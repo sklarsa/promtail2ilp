@@ -10,13 +10,32 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/grafana/loki/pkg/push"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestBasicE2E(t *testing.T) {
 	ctx := context.Background()
-	targetURL := "http://localhost:9999"
+	
+	// Start our server
+	server := NewPromtailServer(0) // Use port 0 to get a random available port
+	
+	// Collect received streams
+	var receivedStreams []push.Stream
+	server.SetHandler(func(stream push.Stream) {
+		receivedStreams = append(receivedStreams, stream)
+		t.Logf("Received stream with labels: %s, entries: %d", stream.Labels, len(stream.Entries))
+	})
+	
+	require.NoError(t, server.Start())
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Stop(shutdownCtx)
+	})
+	
+	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
 	targetLogDir := "/logs"
 
 	promtailConf := fmt.Sprintf(`
@@ -81,8 +100,22 @@ scrape_configs:
 		Started:          true,
 	})
 	require.NoError(t, err)
-	time.Sleep(time.Second * 10)
 	t.Cleanup(func() {
 		ctr.Terminate(ctx)
 	})
+	
+	// Wait for promtail to send data
+	time.Sleep(time.Second * 10)
+	
+	// Verify we received streams
+	require.NotEmpty(t, receivedStreams, "Should have received at least one stream")
+	t.Logf("Received %d total streams", len(receivedStreams))
+	
+	// Log some sample data
+	for i, stream := range receivedStreams[:min(5, len(receivedStreams))] {
+		t.Logf("Stream %d: %s", i+1, stream.Labels)
+		if len(stream.Entries) > 0 {
+			t.Logf("  First entry: %s", stream.Entries[0].Line)
+		}
+	}
 }
