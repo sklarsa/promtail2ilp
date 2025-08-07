@@ -7,6 +7,8 @@ A lightweight HTTP server that receives log streams from [Grafana Promtail](http
 
 This is just about 100% vibe-coded by Claude. Use at your own risk!
 
+This thing doesn't work, don't bother using it right now. Please.
+
 ## Features
 
 - **Multiple input formats**: JSON and Protocol Buffer (Loki's native format)
