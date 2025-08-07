@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/sklarsa/promtail2ilp/server"
 )
 
 func main() {
@@ -39,28 +41,28 @@ func main() {
 	}
 
 	// Parse log level
-	var logLevelEnum LogLevel
+	var logLevelEnum server.LogLevel
 	switch *logLevel {
 	case "error":
-		logLevelEnum = LogLevelError
+		logLevelEnum = server.LogLevelError
 	case "info":
-		logLevelEnum = LogLevelInfo
+		logLevelEnum = server.LogLevelInfo
 	case "debug":
-		logLevelEnum = LogLevelDebug
+		logLevelEnum = server.LogLevelDebug
 	case "trace":
-		logLevelEnum = LogLevelTrace
+		logLevelEnum = server.LogLevelTrace
 	default:
 		log.Fatalf("Invalid log level: %s. Valid options: error, info, debug, trace", *logLevel)
 	}
 
 	// Create server configuration
-	config := DefaultServerConfig()
+	config := server.DefaultServerConfig()
 	config.Port = *port
 	config.LogLevel = logLevelEnum
 
-	server := NewPromtailServerWithConfig(config)
+	promtailServer := server.NewPromtailServerWithConfig(config)
 
-	if err := server.Start(); err != nil {
+	if err := promtailServer.Start(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -73,7 +75,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := server.Stop(ctx); err != nil {
+	if err := promtailServer.Stop(ctx); err != nil {
 		config.Logger.Printf("Error shutting down server: %v", err)
 	}
 }

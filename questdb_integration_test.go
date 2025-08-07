@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/grafana/loki/pkg/push"
 	_ "github.com/lib/pq"
+	"github.com/sklarsa/promtail2ilp/server"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -63,13 +64,13 @@ func TestQuestDBIntegration(t *testing.T) {
 	}, 30*time.Second, time.Second, "Database should be ready for connections")
 
 	// Start promtail server with minimal logging for tests
-	serverConfig := QuietServerConfig()
+	serverConfig := server.QuietServerConfig()
 	serverConfig.Port = 0
 
-	promtailServer := NewPromtailServerWithConfig(serverConfig)
+	promtailServer := server.NewPromtailServerWithConfig(serverConfig)
 
 	// Configure ILP writer with logging callbacks
-	writerConfig := &ILPWriterConfig{
+	writerConfig := &server.ILPWriterConfig{
 		OnSuccess: func(stream push.Stream) {
 			t.Logf("Successfully wrote stream to QuestDB: %s", stream.Labels)
 		},
@@ -78,7 +79,7 @@ func TestQuestDBIntegration(t *testing.T) {
 		},
 	}
 
-	writer, err := NewILPWriterWithConfig(ilpAddr, writerConfig)
+	writer, err := server.NewILPWriterWithConfig(ilpAddr, writerConfig)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		writer.Close()

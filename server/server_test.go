@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bytes"
@@ -81,7 +81,7 @@ scrape_configs:
           format: 02/Jan/2006:15:04:05 -0700
 `, targetURL, targetLogDir)
 
-	inputLogs, err := os.Open("./apache_logs.txt")
+	inputLogs, err := os.Open("../apache_logs.txt")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		inputLogs.Close()

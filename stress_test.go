@@ -13,6 +13,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/loki/pkg/push"
+	"github.com/sklarsa/promtail2ilp/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,18 +23,18 @@ func TestStress_HTTPLoad(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := NewPromtailServerWithConfig(QuietServerConfig())
+	promtailServer := server.NewPromtailServerWithConfig(server.QuietServerConfig())
 
 	var totalReceived int64
-	server.SetHandler(func(stream push.Stream) {
+	promtailServer.SetHandler(func(stream push.Stream) {
 		atomic.AddInt64(&totalReceived, int64(len(stream.Entries)))
 	})
 
-	require.NoError(t, server.Start())
+	require.NoError(t, promtailServer.Start())
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		promtailServer.Stop(shutdownCtx)
 	})
 
 	// Test parameters - EXTREME LOAD! 🔥
@@ -43,7 +44,7 @@ func TestStress_HTTPLoad(t *testing.T) {
 		totalRequests = numWorkers * requestsPerWorker
 	)
 
-	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
+	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	t.Logf("Starting load test: %d workers × %d requests = %d total requests", 
 		numWorkers, requestsPerWorker, totalRequests)
@@ -115,23 +116,23 @@ func TestStress_ConcurrentConnections(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := NewPromtailServerWithConfig(QuietServerConfig())
+	promtailServer := server.NewPromtailServerWithConfig(server.QuietServerConfig())
 
 	var totalStreams int64
-	server.SetHandler(func(stream push.Stream) {
+	promtailServer.SetHandler(func(stream push.Stream) {
 		atomic.AddInt64(&totalStreams, 1)
 	})
 
-	require.NoError(t, server.Start())
+	require.NoError(t, promtailServer.Start())
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		promtailServer.Stop(shutdownCtx)
 	})
 
 	// Test INSANE simultaneous connections 🚀
 	const numConnections = 500
-	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
+	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	t.Logf("Testing %d concurrent connections", numConnections)
 
@@ -191,21 +192,21 @@ func TestStress_LargePayloads(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := NewPromtailServerWithConfig(QuietServerConfig())
+	promtailServer := server.NewPromtailServerWithConfig(server.QuietServerConfig())
 
 	var totalEntries int64
-	server.SetHandler(func(stream push.Stream) {
+	promtailServer.SetHandler(func(stream push.Stream) {
 		atomic.AddInt64(&totalEntries, int64(len(stream.Entries)))
 	})
 
-	require.NoError(t, server.Start())
+	require.NoError(t, promtailServer.Start())
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		promtailServer.Stop(shutdownCtx)
 	})
 
-	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
+	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// Test MASSIVE payload sizes 💥
 	testCases := []struct {
@@ -266,22 +267,22 @@ func TestStress_ProtobufLoad(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := NewPromtailServerWithConfig(QuietServerConfig())
+	promtailServer := server.NewPromtailServerWithConfig(server.QuietServerConfig())
 
 	var totalEntries int64
-	server.SetHandler(func(stream push.Stream) {
+	promtailServer.SetHandler(func(stream push.Stream) {
 		atomic.AddInt64(&totalEntries, int64(len(stream.Entries)))
 	})
 
-	require.NoError(t, server.Start())
+	require.NoError(t, promtailServer.Start())
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		promtailServer.Stop(shutdownCtx)
 	})
 
 	const numRequests = 1000 // PROTOBUF MAYHEM! 🔥
-	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
+	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	t.Logf("Testing %d protobuf requests", numRequests)
 
@@ -350,25 +351,25 @@ func TestStress_MemoryPressure(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := NewPromtailServerWithConfig(QuietServerConfig())
+	promtailServer := server.NewPromtailServerWithConfig(server.QuietServerConfig())
 
 	var totalEntries int64
 	var totalBytes int64
-	server.SetHandler(func(stream push.Stream) {
+	promtailServer.SetHandler(func(stream push.Stream) {
 		atomic.AddInt64(&totalEntries, int64(len(stream.Entries)))
 		for _, entry := range stream.Entries {
 			atomic.AddInt64(&totalBytes, int64(len(entry.Line)))
 		}
 	})
 
-	require.NoError(t, server.Start())
+	require.NoError(t, promtailServer.Start())
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		promtailServer.Stop(shutdownCtx)
 	})
 
-	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
+	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// INSANE memory pressure test - multiple huge payloads simultaneously!
 	const (
@@ -432,23 +433,23 @@ func TestStress_SustainedLoad(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := NewPromtailServerWithConfig(QuietServerConfig())
+	promtailServer := server.NewPromtailServerWithConfig(server.QuietServerConfig())
 
 	var totalRequests int64
 	var totalEntries int64
-	server.SetHandler(func(stream push.Stream) {
+	promtailServer.SetHandler(func(stream push.Stream) {
 		atomic.AddInt64(&totalRequests, 1)
 		atomic.AddInt64(&totalEntries, int64(len(stream.Entries)))
 	})
 
-	require.NoError(t, server.Start())
+	require.NoError(t, promtailServer.Start())
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		promtailServer.Stop(shutdownCtx)
 	})
 
-	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
+	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// SUSTAINED HIGH LOAD for 30 seconds! 💪
 	const (
@@ -539,12 +540,12 @@ func TestStress_MixedWorkload(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := NewPromtailServerWithConfig(QuietServerConfig())
+	promtailServer := server.NewPromtailServerWithConfig(server.QuietServerConfig())
 
 	var jsonRequests int64
 	var protobufRequests int64
 	var totalEntries int64
-	server.SetHandler(func(stream push.Stream) {
+	promtailServer.SetHandler(func(stream push.Stream) {
 		atomic.AddInt64(&totalEntries, int64(len(stream.Entries)))
 		// Detect format by labels (crude but works for testing)
 		if bytes.Contains([]byte(stream.Labels), []byte("json")) {
@@ -554,14 +555,14 @@ func TestStress_MixedWorkload(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, server.Start())
+	require.NoError(t, promtailServer.Start())
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Stop(shutdownCtx)
+		promtailServer.Stop(shutdownCtx)
 	})
 
-	targetURL := fmt.Sprintf("http://localhost:%d", server.Port())
+	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
 	// MIXED WORKLOAD CHAOS! 🌪️
 	const (
