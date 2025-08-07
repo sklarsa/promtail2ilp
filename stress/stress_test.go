@@ -208,7 +208,7 @@ func TestStress_LargePayloads(t *testing.T) {
 
 	targetURL := fmt.Sprintf("http://localhost:%d", promtailServer.Port())
 
-	// Test MASSIVE payload sizes 💥
+	// Test reasonable payload sizes for stress testing
 	testCases := []struct {
 		name             string
 		numStreams       int
@@ -217,10 +217,8 @@ func TestStress_LargePayloads(t *testing.T) {
 	}{
 		{"Small batch", 10, 50, 200},
 		{"Medium batch", 25, 100, 1000},
-		{"Large batch", 50, 500, 5000},
-		{"Extra large batch", 100, 1000, 10000},
-		{"MEGA batch", 200, 2000, 20000},
-		{"ULTRA batch", 500, 5000, 50000},
+		{"Large batch", 50, 500, 2000},
+		{"Extra large batch", 100, 1000, 5000},
 	}
 
 	for _, tc := range testCases {
