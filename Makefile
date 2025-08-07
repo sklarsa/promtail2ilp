@@ -24,6 +24,52 @@ test:
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
+# Run stress tests
+.PHONY: stress
+stress:
+	@echo "Running stress tests..."
+	go test -v -run="TestStress" -timeout=5m ./...
+
+# Run stress tests with race detection
+.PHONY: stress-race
+stress-race:
+	@echo "Running stress tests with race detection..."
+	go test -v -race -run="TestStress" -timeout=10m ./...
+
+# Run individual stress test types
+.PHONY: stress-load stress-concurrent stress-payloads stress-protobuf stress-memory stress-sustained stress-mixed stress-extreme
+stress-load:
+	@echo "Running HTTP load stress test..."
+	./stress.sh load
+
+stress-concurrent:
+	@echo "Running concurrent connections stress test..."
+	./stress.sh concurrent
+
+stress-payloads:
+	@echo "Running large payloads stress test..."
+	./stress.sh payloads
+
+stress-protobuf:
+	@echo "Running protobuf load stress test..."
+	./stress.sh protobuf
+
+stress-memory:
+	@echo "Running INSANE memory pressure test..."
+	./stress.sh memory
+
+stress-sustained:
+	@echo "Running sustained load test..."
+	./stress.sh sustained
+
+stress-mixed:
+	@echo "Running mixed workload chaos test..."
+	./stress.sh mixed
+
+stress-extreme:
+	@echo "🔥🔥🔥 RUNNING ALL EXTREME STRESS TESTS! 🔥🔥🔥"
+	./stress.sh extreme
+
 
 # Run the application
 .PHONY: run
@@ -89,6 +135,16 @@ help:
 	@echo "Available targets:"
 	@echo "  build                Build the binary"
 	@echo "  test                 Run tests with coverage report"
+	@echo "  stress               Run stress tests"
+	@echo "  stress-race          Run stress tests with race detection"
+	@echo "  stress-load          Run HTTP load stress test (20K requests!)"
+	@echo "  stress-concurrent    Run concurrent connections stress test (500 connections!)"
+	@echo "  stress-payloads      Run large payloads stress test (MEGA sizes!)"
+	@echo "  stress-protobuf      Run protobuf load stress test (1000 requests!)"
+	@echo "  stress-memory        Run INSANE memory pressure test"
+	@echo "  stress-sustained     Run sustained load test (30 seconds!)"
+	@echo "  stress-mixed         Run mixed workload chaos test"
+	@echo "  stress-extreme       Run ALL EXTREME stress tests 🔥"
 	@echo "  check                Run all checks (fmt, lint, test)"
 	@echo "  run                  Build and run the application"
 	@echo "  run-debug            Build and run with debug logging"
