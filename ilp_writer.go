@@ -28,7 +28,7 @@ func NewILPWriterWithConfig(addr string, config *ILPWriterConfig) (*ILPWriter, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ILP sender: %w", err)
 	}
-	
+
 	return &ILPWriter{
 		sender: sender,
 		config: config,
@@ -38,24 +38,24 @@ func NewILPWriterWithConfig(addr string, config *ILPWriterConfig) (*ILPWriter, e
 func (w *ILPWriter) WriteStream(stream push.Stream) error {
 	// Parse labels from the stream
 	labels := parseLabels(stream.Labels)
-	
+
 	for _, entry := range stream.Entries {
 		// Start building the ILP line
 		w.sender.Table("logs")
-		
+
 		// Add log line as a field
 		w.sender.StringColumn("log", entry.Line)
-		
+
 		// Add labels as tags
 		for k, v := range labels {
 			// QuestDB requires tag values to be symbols (not strings)
 			w.sender.Symbol(k, v)
 		}
-		
+
 		// Set timestamp
 		w.sender.At(context.Background(), entry.Timestamp)
 	}
-	
+
 	// Flush the data
 	err := w.sender.Flush(context.Background())
 	if err != nil {
@@ -64,11 +64,11 @@ func (w *ILPWriter) WriteStream(stream push.Stream) error {
 		}
 		return fmt.Errorf("failed to flush ILP data: %w", err)
 	}
-	
+
 	if w.config != nil && w.config.OnSuccess != nil {
 		w.config.OnSuccess(stream)
 	}
-	
+
 	return nil
 }
 
@@ -82,13 +82,13 @@ func (w *ILPWriter) Close() error {
 // parseLabels parses the label string format: {key1="value1", key2="value2"}
 func parseLabels(labelStr string) map[string]string {
 	labels := make(map[string]string)
-	
+
 	// Remove curly braces
 	labelStr = strings.Trim(labelStr, "{}")
-	
+
 	// Split by comma
 	pairs := strings.Split(labelStr, ",")
-	
+
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
 		parts := strings.SplitN(pair, "=", 2)
@@ -98,10 +98,9 @@ func parseLabels(labelStr string) map[string]string {
 			labels[key] = value
 		}
 	}
-	
+
 	return labels
 }
-
 
 // StreamHandler returns a handler function that writes streams to QuestDB
 func (w *ILPWriter) StreamHandler() func(stream push.Stream) {

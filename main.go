@@ -17,7 +17,7 @@ func main() {
 		logLevel = flag.String("log-level", "info", "Log level: error, info, debug, trace")
 		help     = flag.Bool("help", false, "Show help message")
 	)
-	
+
 	flag.Usage = func() {
 		log.Printf("Usage: %s [options]\n", os.Args[0])
 		log.Println("\nPromtail to QuestDB bridge server")
@@ -30,14 +30,14 @@ func main() {
 		log.Println("  debug  - Errors, info, and debug details")
 		log.Println("  trace  - All messages including detailed stream content")
 	}
-	
+
 	flag.Parse()
-	
+
 	if *help {
 		flag.Usage()
 		return
 	}
-	
+
 	// Parse log level
 	var logLevelEnum LogLevel
 	switch *logLevel {
@@ -52,12 +52,12 @@ func main() {
 	default:
 		log.Fatalf("Invalid log level: %s. Valid options: error, info, debug, trace", *logLevel)
 	}
-	
+
 	// Create server configuration
 	config := DefaultServerConfig()
 	config.Port = *port
 	config.LogLevel = logLevelEnum
-	
+
 	server := NewPromtailServerWithConfig(config)
 
 	if err := server.Start(); err != nil {
@@ -72,7 +72,7 @@ func main() {
 	config.Logger.Println("Shutting down server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := server.Stop(ctx); err != nil {
 		config.Logger.Printf("Error shutting down server: %v", err)
 	}
